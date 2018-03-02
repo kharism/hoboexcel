@@ -11,18 +11,58 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var READ_TEMP_DIR = "./" //dont forget to end it with path separator
 var PARTITION_SIZE = 300 //the smaller the faster but it will produce more temporary file
 
 type XlsxRowFetcher struct {
-	Filename string
-	ZipFile  *zip.ReadCloser
-	Decoder  *xml.Decoder
-	CurSheet io.ReadCloser
+	Filename        string
+	ZipFile         *zip.ReadCloser
+	Decoder         *xml.Decoder
+	CurSheet        io.ReadCloser
+	IsUsingRamCache bool //set this to true if your sharedstring is relatively small
+	curPartitionId  int
+	cacheSharedStr  []string
 }
 
+//seek string with some caching mechanism
+func (r *XlsxRowFetcher) SeekString(index int) string {
+	fileId := index / PARTITION_SIZE
+	if index >= PARTITION_SIZE {
+		index = index % PARTITION_SIZE
+	}
+	if fileId == r.curPartitionId && len(r.cacheSharedStr) > 0 {
+		return r.cacheSharedStr[index]
+	} else {
+		curFile, _ := os.Open(READ_TEMP_DIR + r.Filename + "ss" + strconv.Itoa(fileId))
+		defer curFile.Close()
+		decoder := xml.NewDecoder(curFile)
+		//curIdx := 0
+		tempStr := []string{}
+		for {
+			tok, _ := decoder.Token()
+			if tok == nil {
+				break
+			}
+			switch se := tok.(type) {
+			case xml.StartElement:
+				if se.Name.Local == "t" {
+					tok2, _ := decoder.Token()
+					cd := tok2.(xml.CharData)
+					//fmt.Println("%d,%s", preIdx, string(cd))
+					tempStr = append(tempStr, string(cd))
+				}
+			}
+		}
+		//fmt.Println(tempStr)
+		r.cacheSharedStr = tempStr
+		r.curPartitionId = fileId
+		return r.cacheSharedStr[index]
+	}
+	return ""
+}
 func SeekString(filename string, index int) string {
 	fileId := index / PARTITION_SIZE
 	//preIdx := index
@@ -70,6 +110,38 @@ func (s *XlsxRowFetcher) Close() error {
 	return nil
 }
 
+type WriteWorker struct {
+	Source       chan string
+	CurPartition int
+	Filename     string
+	TargetBuffer *bufio.Writer
+	TargetFile   io.Closer
+	WorkerGroup  *sync.WaitGroup
+}
+
+func (self *WriteWorker) Run() {
+	curCount := 0
+	for i := range self.Source {
+		self.TargetBuffer.WriteString(i)
+		curCount++
+		if curCount%PARTITION_SIZE == 0 {
+			curCount = 0
+			self.TargetBuffer.Flush()
+			self.TargetFile.Close()
+			self.CurPartition += NUM_WRITER
+			newTarget, _ := os.Create(READ_TEMP_DIR + self.Filename + "ss" + strconv.Itoa(self.CurPartition))
+			newBuffer := bufio.NewWriter(newTarget)
+			self.TargetBuffer = newBuffer
+			self.TargetFile = newTarget
+		}
+	}
+	self.TargetBuffer.Flush()
+	self.TargetFile.Close()
+	self.WorkerGroup.Done()
+}
+
+var NUM_WRITER = 2
+
 func PartitionSharedString(filename string) error {
 	rr, err := zip.OpenReader(filename)
 	baseFilename := filepath.Base(filename)
@@ -90,12 +162,29 @@ func PartitionSharedString(filename string) error {
 		return err
 	}
 	defer ss.Close()
-	idx := 0
-	curFile, err := os.Create(READ_TEMP_DIR + baseFilename + "ss0")
-	if err != nil {
-		return err
+	wg := &sync.WaitGroup{}
+	wg.Add(NUM_WRITER)
+	var curWorker WriteWorker
+	writers := []WriteWorker{}
+	for part := 0; part < NUM_WRITER; part++ {
+		newWorker := WriteWorker{}
+		newWorker.Source = make(chan string, PARTITION_SIZE)
+		newWorker.CurPartition = part
+		newWorker.Filename = baseFilename
+		newWorker.WorkerGroup = wg
+		curFile, err := os.Create(READ_TEMP_DIR + baseFilename + "ss" + strconv.Itoa(part))
+		if err != nil {
+			return err
+		}
+		newWorker.TargetFile = curFile
+		curBuffer := bufio.NewWriter(curFile)
+		newWorker.TargetBuffer = curBuffer
+		go newWorker.Run()
+		writers = append(writers, newWorker)
 	}
-	curBuffer := bufio.NewWriter(curFile)
+	curWorker = writers[0]
+	idx := 0
+
 	decoder := xml.NewDecoder(ss)
 	for {
 		tok, _ := decoder.Token()
@@ -107,16 +196,19 @@ func PartitionSharedString(filename string) error {
 			if se.Name.Local == "t" {
 				val, _ := decoder.Token()
 				str := val.(xml.CharData)
-				curBuffer.WriteString("<t>" + string(str) + "</t>")
+				//curBuffer.WriteString("<t>" + string(str) + "</t>")
+				curWorker.Source <- "<t>" + string(str) + "</t>"
 				idx++
 				if idx%PARTITION_SIZE == 0 {
-					curBuffer.Flush()
-					curFile.Close()
-					curFile, err = os.Create(READ_TEMP_DIR + baseFilename + "ss" + fmt.Sprintf("%d", idx/PARTITION_SIZE))
-					if err != nil {
-						return err
-					}
-					curBuffer = bufio.NewWriter(curFile)
+					curPartition := idx / PARTITION_SIZE
+					curWorker = writers[curPartition%NUM_WRITER]
+					// curBuffer.Flush()
+					// curFile.Close()
+					// curFile, err = os.Create(READ_TEMP_DIR + baseFilename + "ss" + fmt.Sprintf("%d", idx/PARTITION_SIZE))
+					// if err != nil {
+					// 	return err
+					// }
+					// curBuffer = bufio.NewWriter(curFile)
 				}
 			}
 			break
@@ -124,14 +216,10 @@ func PartitionSharedString(filename string) error {
 			break
 		}
 	}
-	err = curBuffer.Flush()
-	if err != nil {
-		return err
+	for _, c := range writers {
+		close(c.Source)
 	}
-	err = curFile.Close()
-	if err != nil {
-		return err
-	}
+	wg.Wait()
 	return nil
 }
 
@@ -190,7 +278,12 @@ func (self *XlsxRowFetcher) NextRow() []string {
 								if c.IsString {
 									idx, _ := strconv.Atoi(c.val)
 									//fmt.Println(idx)
-									c.val = SeekString(self.Filename, idx)
+									if self.IsUsingRamCache {
+										c.val = self.SeekString(idx)
+									} else {
+										c.val = SeekString(self.Filename, idx)
+									}
+
 								}
 								strCols = append(strCols, c.val)
 							}
