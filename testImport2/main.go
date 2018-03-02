@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	ee "github.com/kharism/hoboexcel"
+	ee "github.com/eaciit/hoboexcel"
 )
 
 func main() {
@@ -13,6 +13,8 @@ func main() {
 	ee.PARTITION_SIZE = 300
 
 	XlsxRowFetcher, err := ee.Import("./Book1.xlsx", "sheet1")
+	//don't forget to use ram cache if you can afford it, it really helps in some cases, otherwise turn it off
+	XlsxRowFetcher.IsUsingRamCache = true
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)

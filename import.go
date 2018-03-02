@@ -17,12 +17,51 @@ var READ_TEMP_DIR = "./" //dont forget to end it with path separator
 var PARTITION_SIZE = 300 //the smaller the faster but it will produce more temporary file
 
 type XlsxRowFetcher struct {
-	Filename string
-	ZipFile  *zip.ReadCloser
-	Decoder  *xml.Decoder
-	CurSheet io.ReadCloser
+	Filename        string
+	ZipFile         *zip.ReadCloser
+	Decoder         *xml.Decoder
+	CurSheet        io.ReadCloser
+	IsUsingRamCache bool //set this to true if your sharedstring is relatively small
+	curPartitionId  int
+	cacheSharedStr  []string
 }
 
+//seek string with some caching mechanism
+func (r *XlsxRowFetcher) SeekString(index int) string {
+	fileId := index / PARTITION_SIZE
+	if index >= PARTITION_SIZE {
+		index = index % PARTITION_SIZE
+	}
+	if fileId == r.curPartitionId && len(r.cacheSharedStr) > 0 {
+		return r.cacheSharedStr[index]
+	} else {
+		curFile, _ := os.Open(READ_TEMP_DIR + r.Filename + "ss" + strconv.Itoa(fileId))
+		defer curFile.Close()
+		decoder := xml.NewDecoder(curFile)
+		//curIdx := 0
+		tempStr := []string{}
+		for {
+			tok, _ := decoder.Token()
+			if tok == nil {
+				break
+			}
+			switch se := tok.(type) {
+			case xml.StartElement:
+				if se.Name.Local == "t" {
+					tok2, _ := decoder.Token()
+					cd := tok2.(xml.CharData)
+					//fmt.Println("%d,%s", preIdx, string(cd))
+					tempStr = append(tempStr, string(cd))
+				}
+			}
+		}
+		//fmt.Println(tempStr)
+		r.cacheSharedStr = tempStr
+		r.curPartitionId = fileId
+		return r.cacheSharedStr[index]
+	}
+	return ""
+}
 func SeekString(filename string, index int) string {
 	fileId := index / PARTITION_SIZE
 	//preIdx := index
@@ -190,7 +229,12 @@ func (self *XlsxRowFetcher) NextRow() []string {
 								if c.IsString {
 									idx, _ := strconv.Atoi(c.val)
 									//fmt.Println(idx)
-									c.val = SeekString(self.Filename, idx)
+									if self.IsUsingRamCache {
+										c.val = self.SeekString(idx)
+									} else {
+										c.val = SeekString(self.Filename, idx)
+									}
+
 								}
 								strCols = append(strCols, c.val)
 							}
