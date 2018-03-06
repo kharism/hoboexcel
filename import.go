@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"os"
 	"path/filepath"
@@ -49,8 +50,13 @@ func (r *XlsxRowFetcher) SeekString(index int) string {
 			switch se := tok.(type) {
 			case xml.StartElement:
 				if se.Name.Local == "t" {
-					tok2, _ := decoder.Token()
+					tok2, er2 := decoder.Token()
+					if er2 != nil {
+						fmt.Println(er2.Error())
+						os.Exit(-1)
+					}
 					cd := tok2.(xml.CharData)
+					fmt.Println(cd)
 					//fmt.Println("%d,%s", preIdx, string(cd))
 					tempStr = append(tempStr, string(cd))
 				}
@@ -197,7 +203,7 @@ func PartitionSharedString(filename string) error {
 				val, _ := decoder.Token()
 				str := val.(xml.CharData)
 				//curBuffer.WriteString("<t>" + string(str) + "</t>")
-				curWorker.Source <- "<t>" + string(str) + "</t>"
+				curWorker.Source <- "<t>" + html.EscapeString(string(str)) + "</t>"
 				idx++
 				if idx%PARTITION_SIZE == 0 {
 					curPartition := idx / PARTITION_SIZE
