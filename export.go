@@ -18,7 +18,10 @@ var TempDir = "./xl/worksheets/"
 
 func CleanNonUtfAndControlChar(s string) string {
 	s = strings.Map(func(r rune) rune {
-		if r <= 31 {
+		if r <= 31 { //if r is control character
+			if r == 10 || r == 13 || r == 9 { //because newline
+				return r
+			}
 			return -1
 		}
 		return r
