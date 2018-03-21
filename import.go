@@ -19,13 +19,18 @@ var READ_TEMP_DIR = "./" //dont forget to end it with path separator
 var PARTITION_SIZE = 300 //the smaller the faster but it will produce more temporary file
 
 type XlsxRowFetcher struct {
-	Filename        string
-	ZipFile         *zip.ReadCloser
-	Decoder         *xml.Decoder
-	CurSheet        io.ReadCloser
-	IsUsingRamCache bool //set this to true if your sharedstring is relatively small
-	curPartitionId  int
-	cacheSharedStr  []string
+	Filename         string
+	ZipFile          *zip.ReadCloser
+	Decoder          *xml.Decoder
+	CurSheet         io.ReadCloser
+	IsUsingRamCache  bool //set this to true if your sharedstring is relatively small
+	curPartitionId   int
+	cacheSharedStr   []string
+	prevRow          int
+	prevCol          int
+	skipRowCheckNext bool
+	skipRowTo        int
+	lastToken        xml.Token
 }
 
 //seek string with some caching mechanism
@@ -56,7 +61,7 @@ func (r *XlsxRowFetcher) SeekString(index int) string {
 						os.Exit(-1)
 					}
 					cd := tok2.(xml.CharData)
-					fmt.Println(cd)
+					//fmt.Println(cd)
 					//fmt.Println("%d,%s", preIdx, string(cd))
 					tempStr = append(tempStr, string(cd))
 				}
@@ -234,17 +239,73 @@ type Column struct {
 	val      string
 }
 
+func Power(base, power int) int {
+	if power == 0 {
+		return 1
+	}
+	hasil := 1
+	for i := 1; i <= power; i++ {
+		hasil *= base
+	}
+	return hasil
+}
+func getColIndex(source string) int {
+	sourceLower := strings.ToLower(source)
+	//colId := ""
+	colNum := 0
+	ff := []int{}
+	for _, c := range sourceLower {
+		if c >= 48 && c <= 57 {
+			//colId=source[:idx]
+			break
+		} else {
+			//colNum+=int(c)-96
+			ff = append(ff, int(c)-96)
+		}
+	}
+	//fmt.Println(ff)
+	for idx, c := range ff {
+		colNum += c * Power(26, len(ff)-idx-1)
+	}
+	return colNum
+}
 func (self *XlsxRowFetcher) NextRow() []string {
 
+	if self.skipRowTo != 0 && self.skipRowTo > self.prevRow+1 {
+		self.prevRow++
+		return []string{}
+	}
 	for {
-		tok, _ := self.Decoder.Token()
-		if tok == nil {
-			return nil
+		var tok xml.Token
+		if self.lastToken == nil {
+			tok, _ = self.Decoder.Token()
+			if tok == nil {
+				return nil
+			}
+		} else {
+			tok = self.lastToken
 		}
+
 		switch se := tok.(type) {
 		case xml.StartElement:
 			if se.Name.Local == "row" {
 				fmt.Println("New Row")
+				curRow := 0
+				for _, tagAttr := range se.Attr {
+					if tagAttr.Name.Local == "r" {
+						curRow, _ = strconv.Atoi(tagAttr.Value)
+					}
+				}
+				if curRow > self.prevRow+1 {
+					self.prevRow++
+					self.skipRowTo = curRow
+					self.lastToken = tok
+					return []string{}
+				}
+				self.skipRowTo = 0
+				self.lastToken = nil
+				self.prevCol = 0
+				curCol := 0
 				cols := []Column{}
 				for {
 					s, _ := self.Decoder.Token()
@@ -256,7 +317,16 @@ func (self *XlsxRowFetcher) NextRow() []string {
 								if kk.Name.Local == "t" && kk.Value == "s" {
 									isString = true
 								}
+								if kk.Name.Local == "r" {
+									curCol = getColIndex(kk.Value)
+								}
 							}
+							if curCol > self.prevCol+1 {
+								for kk := self.prevCol; kk < curCol-1; kk++ {
+									cols = append(cols, Column{false, ""})
+								}
+							}
+							self.prevCol = curCol
 							for {
 								ss, _ := self.Decoder.Token()
 								if cc2, ok := ss.(xml.StartElement); ok {
@@ -270,6 +340,7 @@ func (self *XlsxRowFetcher) NextRow() []string {
 												//fmt.Println("CharData", string(cd))
 												cols = append(cols, Column{false, string(cd)})
 											}
+											self.prevCol = curCol
 										}
 										break
 									}
@@ -295,6 +366,7 @@ func (self *XlsxRowFetcher) NextRow() []string {
 							}
 							//fmt.Println(strCols)
 							//break
+							self.prevRow = curRow
 							return strCols
 						}
 					}
