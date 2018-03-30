@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	ee "github.com/eaciit/hoboexcel"
 )
@@ -26,6 +27,6 @@ func main() {
 			XlsxRowFetcher.Close()
 			break
 		}
-		fmt.Println(cols)
+		fmt.Println(strings.Join(cols, "|"))
 	}
 }

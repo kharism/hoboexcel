@@ -5,15 +5,29 @@ import (
 	"bufio"
 	"encoding/xml"
 	"fmt"
+	"html"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+	//"golang.org/x/text/unicode/norm"
 )
 
 var TempDir = "./xl/worksheets/"
 
+func CleanNonUtfAndControlChar(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r <= 31 { //if r is control character
+			if r == 10 || r == 13 || r == 9 { //because newline
+				return r
+			}
+			return -1
+		}
+		return r
+	}, s)
+	return s
+}
 func ExportWorksheet(filename string, rows RowFetcher) {
 	file, _ := os.Create(filename)
 	defer file.Close()
@@ -21,6 +35,7 @@ func ExportWorksheet(filename string, rows RowFetcher) {
 	defer shaStr.Close()
 	Writer := bufio.NewWriter(file)
 	SharedStrWriter := bufio.NewWriter(shaStr)
+
 	Writer.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" mc:Ignorable=\"x14ac\" xmlns:x14ac=\"http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac\">")
 	Writer.WriteString("<sheetViews><sheetView tabSelected=\"1\" workbookViewId=\"0\"><selection activeCell=\"A1\" sqref=\"A1\"/></sheetView></sheetViews>")
 	Writer.WriteString("<sheetFormatPr defaultRowHeight=\"15\" x14ac:dyDescent=\"0.25\"/>")
@@ -56,7 +71,8 @@ func ExportWorksheet(filename string, rows RowFetcher) {
 			newCol.V = strconv.Itoa(cellsCount)
 			cellsCount++
 			rr.C = append(rr.C, newCol)
-			SharedStrWriter.WriteString(fmt.Sprintf("<si><t>%s</t></si>", val))
+			fmt.Println(val, html.EscapeString(CleanNonUtfAndControlChar(val)))
+			SharedStrWriter.WriteString(fmt.Sprintf("<si><t>%s</t></si>", html.EscapeString(CleanNonUtfAndControlChar(val))))
 		}
 		rr.Spans = "1:10"
 		rr.Descent = "0.25"

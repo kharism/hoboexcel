@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	ee "github.com/kharism/hoboexcel"
+	ee "github.com/eaciit/hoboexcel"
 )
 
 type DummyDataFetcher struct {
@@ -18,7 +18,7 @@ func (d *DummyDataFetcher) NextRow() []string {
 		for i := 0; i < 20; i++ {
 			t := colCountToAlphaabet(i)
 			//fmt.Println(fmt.Sprintf("Hola%s%d", t, i))
-			res = append(res, fmt.Sprintf("Hola%s%d", t, d.CurRow))
+			res = append(res, fmt.Sprintf("Hola%s%d & \u0016 世界\nNewLine", t, d.CurRow))
 		}
 		d.CurRow++
 		fmt.Println(d.CurRow)
@@ -38,7 +38,7 @@ func colCountToAlphaabet(idx int) string {
 	return strings.ToUpper(colName)
 }
 func main() {
-	fetcher := DummyDataFetcher{1, 20000}
+	fetcher := DummyDataFetcher{1, 10}
 	ee.Export("dd.xlsx", &fetcher)
 
 	// ee.ExportWorksheet("sheet1.xml", &fetcher)
