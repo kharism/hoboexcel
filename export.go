@@ -162,12 +162,12 @@ func Export(filename string, fetcher RowFetcher) {
 	zipWriter.Close()
 	(file["xl/sharedStrings.xml"].(*os.File)).Close()
 	(file["xl/worksheets/sheet1.xml"].(*os.File)).Close()
-	e := os.Remove("./" + now.Format("20060102150405"))
+	e := os.Remove("./" + sheetName)
 	if e != nil {
 		fmt.Println(e.Error())
 	}
 	shaStr.Close()
-	e = os.Remove("./" + now.Format("20060102150405") + ".ss")
+	e = os.Remove("./" + sheetName + ".ss")
 	if e != nil {
 		fmt.Println(e.Error())
 	}
