@@ -58,7 +58,7 @@ func ExportMultisheet(filename string, fetcher SheetFetcher) {
 		toDeleteList = append(toDeleteList, sheetName)
 		sheetCounter++
 	}
-	SharedStrWriter.Write("</sst>")
+	SharedStrWriter.WriteString("</sst>")
 	SharedStrWriter.Flush()
 	shaStr.Close()
 	file["xl/sharedStrings.xml"], _ = os.Open(sheetName + ".ss")
