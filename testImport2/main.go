@@ -13,7 +13,7 @@ func main() {
 	ee.READ_TEMP_DIR = "./temp/"
 	ee.PARTITION_SIZE = 300
 
-	XlsxRowFetcher, err := ee.Import("./Book1.xlsx", "sheet1")
+	XlsxRowFetcher, err := ee.Import("./Book1.xlsx", "Sheet1")
 	//don't forget to use ram cache if you can afford it, it really helps in some cases, otherwise turn it off
 	XlsxRowFetcher.IsUsingRamCache = true
 	if err != nil {
