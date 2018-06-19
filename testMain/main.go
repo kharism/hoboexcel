@@ -18,7 +18,7 @@ func (d *DummyDataFetcher) NextRow() []string {
 		for i := 0; i < 20; i++ {
 			t := colCountToAlphaabet(i)
 			//fmt.Println(fmt.Sprintf("Hola%s%d", t, i))
-			res = append(res, fmt.Sprintf("Hola%s%d & \u0016 世界\nNewLine", t, d.CurRow))
+			res = append(res, fmt.Sprintf("Hola%s%d & \u0016 世界", t, d.CurRow))
 		}
 		d.CurRow++
 		fmt.Println(d.CurRow)

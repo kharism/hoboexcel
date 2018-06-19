@@ -379,6 +379,35 @@ func (self *XlsxRowFetcher) NextRow() []string {
 
 var SheetNotFoundError = errors.New("Sheet Not Found")
 
+func GetSheetId(file io.Reader, sheetTarget string) string {
+	decoder := xml.NewDecoder(file)
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			return ""
+		}
+		if cc, ok := tok.(xml.StartElement); ok {
+			switch cc.Name.Local {
+			case "sheet":
+				correctSheet := false
+				for _, a := range cc.Attr {
+					if a.Name.Local == "name" && a.Value == sheetTarget {
+						correctSheet = true
+						//break
+					}
+					if correctSheet {
+						if a.Name.Local == "sheetId" {
+							return "sheet" + a.Value
+						}
+					}
+				}
+
+				break
+			}
+		}
+	}
+	return ""
+}
 func Import(filename string, sheetname string) (*XlsxRowFetcher, error) {
 	res := &XlsxRowFetcher{}
 	res.Filename = filepath.Base(filename)
@@ -386,6 +415,17 @@ func Import(filename string, sheetname string) (*XlsxRowFetcher, error) {
 	if err != nil {
 		return nil, err
 	}
+	//lookup sheet id
+	var xlWorkbook *zip.File
+	for _, f := range xlsxFile.File {
+		if strings.HasSuffix(f.Name, "xl/workbook.xml") {
+			xlWorkbook = f
+			break
+		}
+	}
+	ff, _ := xlWorkbook.Open()
+	sheetname = GetSheetId(ff, sheetname)
+	ff.Close()
 	res.ZipFile = xlsxFile
 	var curSheet *zip.File
 	for _, f := range xlsxFile.File {

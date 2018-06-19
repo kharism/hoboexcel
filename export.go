@@ -28,26 +28,21 @@ func CleanNonUtfAndControlChar(s string) string {
 	}, s)
 	return s
 }
-func ExportWorksheet(filename string, rows RowFetcher) {
+func ExportWorksheet(filename string, rows RowFetcher, SharedStrWriter *bufio.Writer, cellsCount *int) {
 	file, _ := os.Create(filename)
 	defer file.Close()
-	shaStr, _ := os.Create(filename + ".ss")
-	defer shaStr.Close()
+
 	Writer := bufio.NewWriter(file)
-	SharedStrWriter := bufio.NewWriter(shaStr)
 
 	Writer.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" mc:Ignorable=\"x14ac\" xmlns:x14ac=\"http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac\">")
 	Writer.WriteString("<sheetViews><sheetView tabSelected=\"1\" workbookViewId=\"0\"><selection activeCell=\"A1\" sqref=\"A1\"/></sheetView></sheetViews>")
 	Writer.WriteString("<sheetFormatPr defaultRowHeight=\"15\" x14ac:dyDescent=\"0.25\"/>")
 	Writer.WriteString("<sheetData>")
 
-	SharedStrWriter.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>")
-	SharedStrWriter.WriteString("<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" count=\"0\" uniqueCount=\"0\">")
-
 	rowCount := 1
 	//uniqueString := map[string]int{}
 	//sortedUsedStr := []string{}
-	cellsCount := 0
+	//cellsCount := 0
 	for {
 		raw_row := rows.NextRow()
 		if raw_row == nil {
@@ -68,8 +63,8 @@ func ExportWorksheet(filename string, rows RowFetcher) {
 			// 	newCol.V = strconv.Itoa(uniqueString[val])
 			// 	sortedUsedStr = append(sortedUsedStr, val)
 			// }
-			newCol.V = strconv.Itoa(cellsCount)
-			cellsCount++
+			newCol.V = strconv.Itoa(*cellsCount)
+			*cellsCount++
 			rr.C = append(rr.C, newCol)
 			fmt.Println(val, html.EscapeString(CleanNonUtfAndControlChar(val)))
 			SharedStrWriter.WriteString(fmt.Sprintf("<si><t>%s</t></si>", html.EscapeString(CleanNonUtfAndControlChar(val))))
@@ -103,8 +98,7 @@ func ExportWorksheet(filename string, rows RowFetcher) {
 	Writer.WriteString("<pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/>")
 	Writer.WriteString("</worksheet>")
 	Writer.Flush()
-	SharedStrWriter.WriteString("</sst>")
-	SharedStrWriter.Flush()
+
 	//write shared strings
 	//sharedString := xlsxSST{}
 	//sharedString.Count = len(sortedUsedStr)
@@ -136,7 +130,15 @@ func colCountToAlphaabet(idx int) string {
 func Export(filename string, fetcher RowFetcher) {
 	now := time.Now()
 	sheetName := now.Format("20060102150405") //filename should be (pseudo)random
-	ExportWorksheet(sheetName, fetcher)
+	shaStr, _ := os.Create(sheetName + ".ss")
+	//defer shaStr.Close()
+	SharedStrWriter := bufio.NewWriter(shaStr)
+	SharedStrWriter.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>")
+	SharedStrWriter.WriteString("<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" count=\"0\" uniqueCount=\"0\">")
+	cellCount := 0
+	ExportWorksheet(sheetName, fetcher, SharedStrWriter, &cellCount)
+	SharedStrWriter.WriteString("</sst>")
+	SharedStrWriter.Flush()
 	outputFile := filename
 	file := make(map[string]io.Reader)
 	file["_rels/.rels"] = DummyRelsDotRels()
@@ -160,11 +162,12 @@ func Export(filename string, fetcher RowFetcher) {
 	zipWriter.Close()
 	(file["xl/sharedStrings.xml"].(*os.File)).Close()
 	(file["xl/worksheets/sheet1.xml"].(*os.File)).Close()
-	e := os.Remove("./" + now.Format("20060102150405"))
+	e := os.Remove("./" + sheetName)
 	if e != nil {
 		fmt.Println(e.Error())
 	}
-	e = os.Remove("./" + now.Format("20060102150405") + ".ss")
+	shaStr.Close()
+	e = os.Remove("./" + sheetName + ".ss")
 	if e != nil {
 		fmt.Println(e.Error())
 	}
