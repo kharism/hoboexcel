@@ -4,4 +4,5 @@ export-import (large) excel data using constant memory usage. Use this at your o
 - Reading Example is in testImport2
 - Writing example is in testMain. 
 - Reading functionality need temporary directory 
-- Concurency is not yet tested.  
+- Concurency is not yet tested.
+- Now support export to multiple sheet(s), Example is in testMultiSheetExport
