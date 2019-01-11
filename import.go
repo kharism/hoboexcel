@@ -289,7 +289,7 @@ func (self *XlsxRowFetcher) NextRow() []string {
 		switch se := tok.(type) {
 		case xml.StartElement:
 			if se.Name.Local == "row" {
-				fmt.Println("New Row")
+				//fmt.Println("New Row")
 				curRow := 0
 				for _, tagAttr := range se.Attr {
 					if tagAttr.Name.Local == "r" {
