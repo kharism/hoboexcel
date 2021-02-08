@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	ee "github.com/eaciit/hoboexcel"
+	ee "github.com/kharism/hoboexcel"
 )
 
 func main() {

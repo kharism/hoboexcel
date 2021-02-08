@@ -44,6 +44,8 @@ func (r *XlsxRowFetcher) SeekString(index int) string {
 	} else {
 		curFile, _ := os.Open(READ_TEMP_DIR + r.Filename + "ss" + strconv.Itoa(fileId))
 		defer curFile.Close()
+		//curFileStr := READ_TEMP_DIR + r.Filename + "ss" + strconv.Itoa(fileId)
+		//fmt.Println(READ_TEMP_DIR + r.Filename + "ss" + strconv.Itoa(fileId))
 		decoder := xml.NewDecoder(curFile)
 		//curIdx := 0
 		tempStr := []string{}
@@ -60,7 +62,10 @@ func (r *XlsxRowFetcher) SeekString(index int) string {
 						fmt.Println(er2.Error())
 						os.Exit(-1)
 					}
-					cd := tok2.(xml.CharData)
+					cd, ok := tok2.(xml.CharData)
+					if !ok {
+						//fmt.Println("error fetching str data", len(tempStr)+1, "of ", curFileStr)
+					}
 					//fmt.Println(cd)
 					//fmt.Println("%d,%s", preIdx, string(cd))
 					tempStr = append(tempStr, string(cd))
@@ -197,30 +202,54 @@ func PartitionSharedString(filename string) error {
 	idx := 0
 
 	decoder := xml.NewDecoder(ss)
+	//counter := 0
 	for {
 		tok, _ := decoder.Token()
 		if tok == nil {
 			break
 		}
+
 		switch se := tok.(type) {
 		case xml.StartElement:
 			if se.Name.Local == "t" {
-				val, _ := decoder.Token()
-				str := val.(xml.CharData)
-				//curBuffer.WriteString("<t>" + string(str) + "</t>")
-				curWorker.Source <- "<t>" + html.EscapeString(string(str)) + "</t>"
-				idx++
-				if idx%PARTITION_SIZE == 0 {
-					curPartition := idx / PARTITION_SIZE
-					curWorker = writers[curPartition%NUM_WRITER]
-					// curBuffer.Flush()
-					// curFile.Close()
-					// curFile, err = os.Create(READ_TEMP_DIR + baseFilename + "ss" + fmt.Sprintf("%d", idx/PARTITION_SIZE))
-					// if err != nil {
-					// 	return err
-					// }
-					// curBuffer = bufio.NewWriter(curFile)
+				//fmt.Println(se.Name.Space)
+				//counter++
+				//fmt.Println(counter)
+				val, err := decoder.Token()
+				if err != nil {
+					fmt.Println(err.Error())
+					os.Exit(-1)
 				}
+				str, ok := val.(xml.CharData)
+				if ok {
+					//curBuffer.WriteString("<t>" + string(str) + "</t>")
+					curWorker.Source <- "<t>" + html.EscapeString(string(str)) + "</t>"
+					idx++
+					//fmt.Println(html.EscapeString(string(str)))
+					if idx%PARTITION_SIZE == 0 {
+						curPartition := idx / PARTITION_SIZE
+						curWorker = writers[curPartition%NUM_WRITER]
+						// curBuffer.Flush()
+						// curFile.Close()
+						// curFile, err = os.Create(READ_TEMP_DIR + baseFilename + "ss" + fmt.Sprintf("%d", idx/PARTITION_SIZE))
+						// if err != nil {
+						// 	return err
+						// }
+						// curBuffer = bufio.NewWriter(curFile)
+					}
+				} else {
+					ee, ok := val.(xml.EndElement)
+					if ok && ee.Name.Local == "t" {
+						curWorker.Source <- "<t></t>"
+						idx++
+						if idx%PARTITION_SIZE == 0 {
+							curPartition := idx / PARTITION_SIZE
+							curWorker = writers[curPartition%NUM_WRITER]
+						}
+					}
+
+				}
+
 			}
 			break
 		default:
@@ -236,6 +265,7 @@ func PartitionSharedString(filename string) error {
 
 type Column struct {
 	IsString bool
+	CellCode string
 	val      string
 }
 
@@ -248,6 +278,23 @@ func Power(base, power int) int {
 		hasil *= base
 	}
 	return hasil
+}
+func GetExcelColumnName(columnNumber int) string {
+	dividend := columnNumber
+	columnName := ""
+	modulo := byte(0)
+	for {
+
+		modulo = byte((dividend - 1) % 26)
+		//fmt.Println("SSS", string([]byte{65 + modulo}))
+		columnName = string([]byte{65 + modulo}) + columnName
+		dividend = (int)((dividend - int(modulo)) / 26)
+		if dividend == 0 {
+			break
+		}
+	}
+
+	return columnName
 }
 func getColIndex(source string) int {
 	sourceLower := strings.ToLower(source)
@@ -269,8 +316,22 @@ func getColIndex(source string) int {
 	}
 	return colNum
 }
-func (self *XlsxRowFetcher) NextRow() []string {
 
+type ColFetcher struct {
+	Decoder          *xml.Decoder
+	CurSheet         io.ReadCloser
+	IsUsingRamCache  bool //set this to true if your sharedstring is relatively small
+	curPartitionId   int
+	cacheSharedStr   []string
+	prevRow          int
+	prevCol          int
+	skipRowCheckNext bool
+	skipRowTo        int
+	lastToken        xml.Token
+}
+
+func (self *XlsxRowFetcher) NextRow() []string {
+	// logger := log.New(os.Stdout, "NEXTROW", log.Llongfile)
 	if self.skipRowTo != 0 && self.skipRowTo > self.prevRow+1 {
 		self.prevRow++
 		return []string{}
@@ -285,7 +346,7 @@ func (self *XlsxRowFetcher) NextRow() []string {
 		} else {
 			tok = self.lastToken
 		}
-
+		//logger.Println("TOK",tok)
 		switch se := tok.(type) {
 		case xml.StartElement:
 			if se.Name.Local == "row" {
@@ -307,9 +368,13 @@ func (self *XlsxRowFetcher) NextRow() []string {
 				self.prevCol = 0
 				curCol := 0
 				cols := []Column{}
+				colCount := 0
+			columnLoop:
 				for {
 					s, _ := self.Decoder.Token()
+					//logger.Println("Fetching Token",s)
 					if cc, ok := s.(xml.StartElement); ok {
+						cellId := ""
 						if cc.Name.Local == "c" {
 							//fmt.Println("Col", cc.Attr)
 							isString := false
@@ -319,30 +384,50 @@ func (self *XlsxRowFetcher) NextRow() []string {
 								}
 								if kk.Name.Local == "r" {
 									curCol = getColIndex(kk.Value)
+									// logger.Println("Processing Cell", kk.Value, curCol)
+									cellId = kk.Value
 								}
 							}
 							if curCol > self.prevCol+1 {
+								// logger.Println("Appending emptyCollumn", curRow, curCol, GetExcelColumnName(curCol), self.prevCol+1, GetExcelColumnName(self.prevCol+1))
 								for kk := self.prevCol; kk < curCol-1; kk++ {
-									cols = append(cols, Column{false, ""})
+									cols = append(cols, Column{false, "DummySh", ""})
+									colCount++
 								}
+								// logger.Println("Done Appending emptyCollumn", GetExcelColumnName(curCol), curCol, len(cols))
 							}
 							self.prevCol = curCol
+							//look for next valid token either v or c
+
 							for {
 								ss, _ := self.Decoder.Token()
+								//logger.Println(ss)
 								if cc2, ok := ss.(xml.StartElement); ok {
 									if cc2.Name.Local == "v" {
 										cont, _ := self.Decoder.Token()
 										if cd, ok := cont.(xml.CharData); ok {
 											if isString {
 												//fmt.Println("CharData String", string(cd))
-												cols = append(cols, Column{true, string(cd)})
+												cols = append(cols, Column{true, cellId, string(cd)})
+												colCount++
 											} else {
 												//fmt.Println("CharData", string(cd))
-												cols = append(cols, Column{false, string(cd)})
+												cols = append(cols, Column{false, cellId, string(cd)})
+												colCount++
 											}
-											self.prevCol = curCol
+											// logger.Println("Setting value on", cellId, isString)
+											//self.prevCol = curCol
 										}
-										break
+										//logger.Println("Breaking shits")
+										continue columnLoop
+									}
+								}
+								if cc2, ok := ss.(xml.EndElement); ok {
+									if cc2.Name.Local == "c" {
+										// logger.Println("adding empty column on", GetExcelColumnName(curCol), cellId)
+										cols = append(cols, Column{false, cellId, ""})
+										// logger.Println("Breaking shits")
+										continue columnLoop
 									}
 								}
 							}
@@ -350,18 +435,21 @@ func (self *XlsxRowFetcher) NextRow() []string {
 					}
 					if cc, ok := s.(xml.EndElement); ok {
 						if cc.Name.Local == "row" {
+							// logger.Println("Done looping row")
 							strCols := []string{}
 							for _, c := range cols {
 								if c.IsString {
 									idx, _ := strconv.Atoi(c.val)
 									//fmt.Println(idx)
 									if self.IsUsingRamCache {
+										// logger.Println("Seeking String", idx)
 										c.val = self.SeekString(idx)
 									} else {
 										c.val = SeekString(self.Filename, idx)
 									}
 
 								}
+								// logger.Println("Appending RealValue", c.CellCode, c.val, c.IsString)
 								strCols = append(strCols, c.val)
 							}
 							//fmt.Println(strCols)
@@ -396,8 +484,9 @@ func GetSheetId(file io.Reader, sheetTarget string) string {
 						//break
 					}
 					if correctSheet {
-						if a.Name.Local == "sheetId" {
-							return "sheet" + a.Value
+						if a.Name.Local == "id" {
+							//fmt.Println("sheet" + a.Value[3:])
+							return "sheet" + a.Value[3:]
 						}
 					}
 				}
